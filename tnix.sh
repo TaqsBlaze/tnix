@@ -58,6 +58,7 @@ else
 
     echo ""
     echo "📦 Creating virtual environment..."
+
     python3 -m venv $VENV_PATH
 
     source $VENV_PATH/bin/activate
@@ -65,6 +66,7 @@ else
     read -p "Install requirements.txt packages? (y/n): " INSTALL_REQS
 
     if [[ "$INSTALL_REQS" == "y" || "$INSTALL_REQS" == "Y" ]]; then
+
         if [ -f "$PROJECT_DIR/requirements.txt" ]; then
             pip install -r $PROJECT_DIR/requirements.txt
         else
@@ -85,33 +87,31 @@ echo "=================================================="
 read -p "Run apt update/upgrade? (y/n): " RUN_UPDATE
 
 if [[ "$RUN_UPDATE" == "y" || "$RUN_UPDATE" == "Y" ]]; then
+
     apt update -y
     apt upgrade -y
+
 fi
 
-read -p "Install/Reinstall nginx? (y/n): " INSTALL_NGINX
+read -p "Install nginx? (y/n): " INSTALL_NGINX
 
 if [[ "$INSTALL_NGINX" == "y" || "$INSTALL_NGINX" == "Y" ]]; then
 
-    echo ""
-    echo "📦 Installing nginx..."
-
     apt install nginx -y
+
 fi
 
 read -p "Install certbot + nginx plugin? (y/n): " INSTALL_CERTBOT
 
 if [[ "$INSTALL_CERTBOT" == "y" || "$INSTALL_CERTBOT" == "Y" ]]; then
 
-    echo ""
-    echo "📦 Installing certbot..."
-
     apt install certbot python3-certbot-nginx -y
+
 fi
 
 echo ""
 echo "=================================================="
-echo "📁 PERMISSIONS"
+echo "📁 SETTING PERMISSIONS"
 echo "=================================================="
 
 chmod -R 755 $PROJECT_DIR || true
@@ -153,12 +153,17 @@ echo "🧪 CHECKING GUNICORN SERVICE"
 echo "=================================================="
 
 if systemctl is-active --quiet ${SERVICE_NAME}; then
+
     echo "✅ ${SERVICE_NAME} service is running."
+
 else
+
     echo "❌ ${SERVICE_NAME} service failed."
-    echo ""
+
     journalctl -u ${SERVICE_NAME} --no-pager -n 30
+
     exit 1
+
 fi
 
 echo ""
@@ -253,27 +258,62 @@ EOF
             nginx -t
 
         else
+
             echo "❌ Deployment stopped."
             exit 1
+
         fi
+
     else
+
         echo ""
         echo "❌ Unknown nginx configuration error."
         exit 1
+
     fi
 fi
 
 echo ""
 echo "=================================================="
-echo "🚫 CLEARING PORT 80 CONFLICTS"
+echo "🚫 CHECKING PORT 80 CONFLICTS"
 echo "=================================================="
 
-systemctl stop apache2 2>/dev/null || true
-systemctl disable apache2 2>/dev/null || true
+PORT_SERVICE=$(lsof -i :80 -t 2>/dev/null | head -n 1)
 
-pkill nginx 2>/dev/null || true
+if [ ! -z "$PORT_SERVICE" ]; then
 
-echo "✅ Port conflicts cleared."
+    SERVICE_NAME_PORT=$(ps -p $PORT_SERVICE -o comm=)
+
+    echo ""
+    echo "⚠️ Port 80 is currently being used by:"
+    echo "➡️ $SERVICE_NAME_PORT (PID: $PORT_SERVICE)"
+
+    read -p "Stop this service/process automatically? (y/n): " STOP_PORT_SERVICE
+
+    if [[ "$STOP_PORT_SERVICE" == "y" || "$STOP_PORT_SERVICE" == "Y" ]]; then
+
+        echo ""
+        echo "🛑 Stopping process using port 80..."
+
+        kill -9 $PORT_SERVICE || true
+
+        sleep 2
+
+        echo "✅ Port 80 cleaned."
+
+    else
+
+        echo ""
+        echo "⚠️ Port cleanup skipped."
+
+    fi
+
+else
+
+    echo ""
+    echo "✅ Port 80 is free."
+
+fi
 
 echo ""
 echo "=================================================="
@@ -289,14 +329,72 @@ echo "🔍 VERIFYING NGINX"
 echo "=================================================="
 
 if systemctl is-active --quiet nginx; then
+
     echo "✅ Nginx is running successfully."
+
 else
+
     echo "❌ Nginx failed to start."
+
     echo ""
     systemctl status nginx --no-pager
+
     echo ""
     journalctl -xeu nginx.service --no-pager -n 30
+
     exit 1
+
+fi
+
+echo ""
+echo "=================================================="
+echo "🔥 CONFIGURING FIREWALL (UFW)"
+echo "=================================================="
+
+read -p "Install UFW firewall? (y/n): " INSTALL_UFW
+
+if [[ "$INSTALL_UFW" == "y" || "$INSTALL_UFW" == "Y" ]]; then
+
+    apt install ufw -y
+
+    echo ""
+    echo "🔓 Allowing OpenSSH..."
+    ufw allow OpenSSH
+
+    echo ""
+    echo "🔓 Allowing Port 22..."
+    ufw allow 22/tcp
+
+    echo ""
+    echo "🔓 Allowing Full Nginx Access..."
+    ufw allow 'Nginx Full'
+
+    echo ""
+    read -p "Enable UFW firewall now? (y/n): " ENABLE_UFW
+
+    if [[ "$ENABLE_UFW" == "y" || "$ENABLE_UFW" == "Y" ]]; then
+
+        ufw --force enable
+
+        echo ""
+        echo "✅ UFW enabled successfully."
+
+        echo ""
+        echo "📋 Firewall Rules:"
+        ufw status
+
+    else
+
+        echo ""
+        echo "⚠️ UFW installed but not enabled."
+
+    fi
+
+else
+
+    echo ""
+    echo "⚠️ UFW setup skipped."
+
 fi
 
 echo ""
@@ -330,8 +428,10 @@ if [[ "$RUN_CERTBOT" == "y" || "$RUN_CERTBOT" == "Y" ]]; then
     echo "✅ SSL setup completed."
 
 else
+
     echo ""
     echo "⚠️ SSL setup skipped."
+
 fi
 
 echo ""
@@ -369,6 +469,10 @@ echo "nginx -t"
 echo ""
 echo "Check Open Ports:"
 echo "ss -tulpn"
+
+echo ""
+echo "🔥 Firewall Rules:"
+echo "ufw status"
 
 echo ""
 echo "🚀 TNIX deployment completed successfully!"
