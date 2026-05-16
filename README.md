@@ -1,5 +1,4 @@
-# TNIX
-
+![TNIX Banner](https://raw.githubusercontent.com/TaqsBlaze/tnix/main/image/image.png)
 Automated Flask VPS deployment toolkit for production ready Python applications.
 
 TNIX simplifies the entire deployment process by automatically configuring:
