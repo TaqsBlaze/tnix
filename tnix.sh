@@ -335,61 +335,60 @@ run_docker() {
         info "Generating Dockerfile..."
 
         cat > "$DOCKERFILE" <<EOF_DOCKERFILE
-    FROM python:3.13-slim
+FROM python:3.13-slim
 
-    ENV PYTHONDONTWRITEBYTECODE=1 \\
-        PYTHONUNBUFFERED=1 \\
-        PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1 \\
+    PYTHONUNBUFFERED=1 \\
+    PIP_NO_CACHE_DIR=1
 
-    WORKDIR /app
+WORKDIR /app
 
-    RUN apt-get update \\
-        && apt-get install -y --no-install-recommends curl ca-certificates \\
-        && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \\
+    && apt-get install -y --no-install-recommends curl ca-certificates \\
+    && rm -rf /var/lib/apt/lists/*
 
-    COPY requirements.txt .
+COPY requirements.txt .
 
-    RUN pip install --upgrade pip \\
-        && pip install -r requirements.txt
+RUN pip install --upgrade pip \\
+    && pip install -r requirements.txt
 
-    COPY . .
+COPY . .
 
-    RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \\
-        && chown -R appuser:appuser /app
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \\
+    && chown -R appuser:appuser /app
 
-    USER appuser
+USER appuser
 
-    EXPOSE $APP_PORT
+EXPOSE ${APP_PORT}
 
-    CMD ["gunicorn", "--workers", "3", "--bind", "0.0.0.0:$APP_PORT", "$APP_MODULE"]
+CMD ["gunicorn", "--workers", "3", "--bind", "0.0.0.0:${APP_PORT}", "${APP_MODULE}"]
 EOF_DOCKERFILE
-
         success "Dockerfile created: $DOCKERFILE"
     fi
 
     if [[ "$BUILD_LOCAL" == "true" && ! -f "$DOCKERIGNORE" ]]; then
         cat > "$DOCKERIGNORE" <<'EOF_DOCKERIGNORE'
-    .git
-    .gitignore
-    .github
-    .venv
-    venv
-    env
-    __pycache__
-    *.pyc
-    *.pyo
-    *.pyd
-    .pytest_cache
-    .mypy_cache
-    .ruff_cache
-    .coverage
-    htmlcov
-    .env
-    .env.*
-    node_modules
-    Dockerfile
-    docker-compose*.yml
-    *.log
+.git
+.gitignore
+.github
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+.env
+.env.*
+node_modules
+Dockerfile
+docker-compose*.yml
+*.log
 EOF_DOCKERIGNORE
         success ".dockerignore created."
     fi
@@ -400,56 +399,66 @@ EOF_DOCKERIGNORE
 
     log "🧩 GENERATING DOCKER COMPOSE"
 
+    # Generate the Compose file directly instead of assembling YAML from
+    # multiline shell variables. This keeps indentation deterministic and
+    # prevents fields such as `dockerfile` and `container_name` from being
+    # accidentally written on the same line.
     if [[ "$BUILD_LOCAL" == "true" ]]; then
-        BUILD_BLOCK=$(cat <<EOF_BUILD_BLOCK
+        cat > "$COMPOSE_FILE" <<EOF_COMPOSE
+services:
+  app:
+    image: "${IMAGE_NAME}:${IMAGE_TAG}"
     build:
-      context: $PROJECT_DIR
+      context: .
       dockerfile: Dockerfile
-EOF_BUILD_BLOCK
-    )
+    container_name: "${CONTAINER_NAME}"
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${APP_PORT}:${APP_PORT}"
+    init: true
+EOF_COMPOSE
     else
-        BUILD_BLOCK=""
+        cat > "$COMPOSE_FILE" <<EOF_COMPOSE
+services:
+  app:
+    image: "${IMAGE_NAME}:${IMAGE_TAG}"
+    container_name: "${CONTAINER_NAME}"
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${APP_PORT}:${APP_PORT}"
+    init: true
+EOF_COMPOSE
     fi
 
     if [[ "$HEALTH_ENABLED" == "true" ]]; then
-        HEALTH_BLOCK=$(cat <<EOF_HEALTH_BLOCK
+        cat >> "$COMPOSE_FILE" <<EOF_HEALTH
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$APP_PORT$HEALTH_PATH', timeout=5)"]
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${APP_PORT}${HEALTH_PATH}', timeout=5)"
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-EOF_HEALTH_BLOCK
-    )
-    else
-        HEALTH_BLOCK=""
+EOF_HEALTH
     fi
-
-    cat > "$COMPOSE_FILE" <<EOF_COMPOSE
-services:
-  app:
-    image: ${IMAGE_NAME}:${IMAGE_TAG}
-    container_name: ${CONTAINER_NAME}
-${BUILD_BLOCK}
-    restart: unless-stopped
-    env_file:
-      - ${ENV_FILE}
-    ports:
-      - "127.0.0.1:${APP_PORT}:${APP_PORT}"
-    init: true
-${HEALTH_BLOCK}
-EOF_COMPOSE
 
     success "Compose file created: $COMPOSE_FILE"
 
     # Validate the generated Compose project name before invoking Docker.
-    # This also makes the actual value visible when troubleshooting.
     info "Compose project: [$COMPOSE_PROJECT]"
     if [[ ! "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
         fail "Invalid Docker Compose project name: [$COMPOSE_PROJECT]"
     fi
 
-    # Validate compose syntax before doing anything else.
+    # Validate the generated YAML before building or starting anything.
+    info "Validating Docker Compose configuration..."
     docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" config >/dev/null
     success "Docker Compose configuration is valid."
 
