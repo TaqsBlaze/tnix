@@ -171,7 +171,12 @@ run_docker() {
 
     read -r -p "Enter service name [default: tnixapp]: " SERVICE_NAME
     SERVICE_NAME="${SERVICE_NAME:-tnixapp}"
-    SERVICE_NAME="$(echo "$SERVICE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"
+
+    # Normalize the systemd/container service name without introducing a
+    # trailing hyphen from the newline produced by echo. Dots are retained
+    # here because systemd/container names can use them.
+    SERVICE_NAME="$(printf '%s' "$SERVICE_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+//; s/-+$//')"
+    [[ -n "$SERVICE_NAME" ]] || fail "Invalid service name."
 
     read -r -p "Enter container/app port [default: 8000]: " APP_PORT
     APP_PORT="${APP_PORT:-8000}"
@@ -212,7 +217,13 @@ run_docker() {
     NGINX_LINK="/etc/nginx/sites-enabled/${SERVICE_NAME}"
     SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
     CONTAINER_NAME="$SERVICE_NAME"
-    COMPOSE_PROJECT="$SERVICE_NAME"
+
+    # Docker Compose project names are more restrictive than service names:
+    # only lowercase letters, numbers, hyphens and underscores are allowed,
+    # and the name must begin with a letter or number. In particular, dots
+    # are NOT valid here (e.g. dev.ndini -> dev-ndini).
+    COMPOSE_PROJECT="$(printf '%s' "$SERVICE_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/-/g; s/^[^a-z0-9]+//; s/[^a-z0-9]+$//')"
+    [[ -n "$COMPOSE_PROJECT" ]] || fail "Unable to derive a valid Docker Compose project name from service name: $SERVICE_NAME"
 
     if [[ "$INCLUDE_WWW" =~ ^[Yy]$ ]]; then
         CERTBOT_DOMAINS=("-d" "$DOMAIN" "-d" "www.$DOMAIN")
