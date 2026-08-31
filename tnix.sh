@@ -402,9 +402,9 @@ EOF_DOCKERIGNORE
 
     if [[ "$BUILD_LOCAL" == "true" ]]; then
         BUILD_BLOCK=$(cat <<EOF_BUILD_BLOCK
-        build:
-          context: $PROJECT_DIR
-          dockerfile: Dockerfile
+    build:
+      context: $PROJECT_DIR
+      dockerfile: Dockerfile
 EOF_BUILD_BLOCK
     )
     else
@@ -413,12 +413,12 @@ EOF_BUILD_BLOCK
 
     if [[ "$HEALTH_ENABLED" == "true" ]]; then
         HEALTH_BLOCK=$(cat <<EOF_HEALTH_BLOCK
-        healthcheck:
-          test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$APP_PORT$HEALTH_PATH', timeout=5)"]
-          interval: 30s
-          timeout: 5s
-          retries: 3
-          start_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$APP_PORT$HEALTH_PATH', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 EOF_HEALTH_BLOCK
     )
     else
@@ -426,17 +426,18 @@ EOF_HEALTH_BLOCK
     fi
 
     cat > "$COMPOSE_FILE" <<EOF_COMPOSE
-    services:
-      app:
-        image: ${IMAGE_NAME}:${IMAGE_TAG}
-    ${BUILD_BLOCK}    container_name: ${CONTAINER_NAME}
-        restart: unless-stopped
-        env_file:
-          - ${ENV_FILE}
-        ports:
-          - "127.0.0.1:${APP_PORT}:${APP_PORT}"
-        init: true
-    ${HEALTH_BLOCK}
+services:
+  app:
+    image: ${IMAGE_NAME}:${IMAGE_TAG}
+    container_name: ${CONTAINER_NAME}
+${BUILD_BLOCK}
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE}
+    ports:
+      - "127.0.0.1:${APP_PORT}:${APP_PORT}"
+    init: true
+${HEALTH_BLOCK}
 EOF_COMPOSE
 
     success "Compose file created: $COMPOSE_FILE"
