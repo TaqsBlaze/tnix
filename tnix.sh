@@ -172,10 +172,9 @@ run_docker() {
     read -r -p "Enter service name [default: tnixapp]: " SERVICE_NAME
     SERVICE_NAME="${SERVICE_NAME:-tnixapp}"
 
-    # Normalize the systemd/container service name without introducing a
-    # trailing hyphen from the newline produced by echo. Dots are retained
-    # here because systemd/container names can use them.
-    SERVICE_NAME="$(printf '%s' "$SERVICE_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+//; s/-+$//')"
+    # Normalize service name safely. Do not use echo | tr -cs here because
+    # echo adds a trailing newline, which can become a trailing hyphen.
+    SERVICE_NAME="$(printf '%s' "$SERVICE_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^[.-]+//; s/[.-]+$//')"
     [[ -n "$SERVICE_NAME" ]] || fail "Invalid service name."
 
     read -r -p "Enter container/app port [default: 8000]: " APP_PORT
@@ -218,10 +217,9 @@ run_docker() {
     SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
     CONTAINER_NAME="$SERVICE_NAME"
 
-    # Docker Compose project names are more restrictive than service names:
-    # only lowercase letters, numbers, hyphens and underscores are allowed,
-    # and the name must begin with a letter or number. In particular, dots
-    # are NOT valid here (e.g. dev.ndini -> dev-ndini).
+    # Docker Compose project names are stricter than systemd/container names:
+    # only lowercase letters, digits, hyphens and underscores are allowed,
+    # and the name must start with a letter or digit.
     COMPOSE_PROJECT="$(printf '%s' "$SERVICE_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/-/g; s/^[^a-z0-9]+//; s/[^a-z0-9]+$//')"
     [[ -n "$COMPOSE_PROJECT" ]] || fail "Unable to derive a valid Docker Compose project name from service name: $SERVICE_NAME"
 
@@ -442,6 +440,13 @@ EOF_HEALTH_BLOCK
 EOF_COMPOSE
 
     success "Compose file created: $COMPOSE_FILE"
+
+    # Validate the generated Compose project name before invoking Docker.
+    # This also makes the actual value visible when troubleshooting.
+    info "Compose project: [$COMPOSE_PROJECT]"
+    if [[ ! "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        fail "Invalid Docker Compose project name: [$COMPOSE_PROJECT]"
+    fi
 
     # Validate compose syntax before doing anything else.
     docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" config >/dev/null
