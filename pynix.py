@@ -570,17 +570,44 @@ def install_or_repair_nginx_bare() -> None:
     install_apt(["nginx"])
 
 
-def activate_nginx_site(config_path: Path, service_name: str, remove_default: bool = False) -> None:
-    enabled = Path("/etc/nginx/sites-enabled") / service_name
-    enabled.parent.mkdir(parents=True, exist_ok=True)
+def activate_nginx_site(
+    config_path: Path,
+    domain: str,
+    *,
+    remove_default: bool = False,
+) -> Path:
+    """Create and verify an Nginx sites-enabled symlink named after the domain."""
+    available_dir = Path("/etc/nginx/sites-available")
+    enabled_dir = Path("/etc/nginx/sites-enabled")
+
+    available_dir.mkdir(parents=True, exist_ok=True)
+    enabled_dir.mkdir(parents=True, exist_ok=True)
+
+    if not config_path.is_file():
+        fail(f"Nginx config was not created: {config_path}")
+
+    enabled = enabled_dir / domain
+
     if enabled.exists() or enabled.is_symlink():
         enabled.unlink()
+
     enabled.symlink_to(config_path)
 
+    if not enabled.is_symlink():
+        fail(f"Failed to create Nginx enabled-site symlink: {enabled}")
+
+    if enabled.resolve() != config_path.resolve():
+        fail(
+            f"Nginx enabled-site symlink points to {enabled.resolve()}, "
+            f"expected {config_path.resolve()}"
+        )
+
     if remove_default:
-        default = Path("/etc/nginx/sites-enabled/default")
+        default = enabled_dir / "default"
         if default.exists() or default.is_symlink():
             default.unlink()
+
+    return enabled
 
 
 # ==========================================================
@@ -699,7 +726,8 @@ def deploy_docker() -> None:
     dockerignore = deploy_dir / ".dockerignore"
     env_file = deploy_dir / ".env"
 
-    nginx_conf = Path("/etc/nginx/sites-available") / service_name
+    nginx_conf = Path("/etc/nginx/sites-available") / domain
+    nginx_link = Path("/etc/nginx/sites-enabled") / domain
     systemd_service = Path("/etc/systemd/system") / f"{service_name}.service"
     container_name = sanitize_service_name(service_name)
     compose_project = compose_project_name(service_name)
@@ -780,6 +808,36 @@ def deploy_docker() -> None:
     run(["systemctl", "daemon-reload"])
     run(["systemctl", "enable", service_name])
 
+    # Configure the reverse proxy before starting the application. This makes
+    # the deployment order deterministic and ensures the server configuration
+    # is in place before traffic can be routed to the application.
+    section("🌐 CREATING NGINX CONFIGURATION")
+    generate_docker_nginx(
+        domain_names=server_names,
+        app_port=port,
+        output_path=nginx_conf,
+    )
+
+    if not nginx_conf.is_file():
+        fail(f"Failed to create Nginx configuration: {nginx_conf}")
+    success(f"Nginx config created: {nginx_conf}")
+
+    nginx_link = activate_nginx_site(
+        nginx_conf,
+        domain,
+        remove_default=False,
+    )
+    success(f"Nginx site enabled: {nginx_link}")
+
+    section("🧪 TESTING NGINX CONFIGURATION")
+    if run(["nginx", "-t"], check=False).returncode != 0:
+        fail("Nginx configuration failed.")
+    success("Nginx configuration successful.")
+
+    run(["systemctl", "enable", "nginx"])
+    run(["systemctl", "reload", "nginx"])
+    success("Nginx reloaded successfully.")
+
     section("🚀 STARTING DOCKER APPLICATION")
     run(["systemctl", "restart", service_name])
     time.sleep(3)
@@ -806,23 +864,7 @@ def deploy_docker() -> None:
     success(f"Container {container_name} is running.")
     wait_for_container_health(container_name, health_enabled)
 
-    section("🌐 CREATING NGINX CONFIGURATION")
-    generate_docker_nginx(
-        domain_names=server_names,
-        app_port=port,
-        output_path=nginx_conf,
-    )
-    activate_nginx_site(nginx_conf, service_name, remove_default=False)
-
-    section("🧪 TESTING NGINX CONFIGURATION")
-    if run(["nginx", "-t"], check=False).returncode != 0:
-        fail("Nginx configuration failed.")
-    success("Nginx configuration successful.")
-
-    run(["systemctl", "enable", "nginx"])
-    run(["systemctl", "reload", "nginx"])
-    success("Nginx reloaded successfully.")
-
+    # With the application now running, finish host security and HTTPS setup.
     configure_firewall()
     configure_ssl(domain, include_www, ssl_email)
 
@@ -845,6 +887,7 @@ def deploy_docker() -> None:
     print(f"🔐 Environment:       {env_file}")
     print(f"🧾 Systemd unit:      {systemd_service}")
     print(f"🌐 Nginx config:      {nginx_conf}")
+    print(f"🔗 Nginx enabled:      {nginx_link}")
 
     section("📋 MANAGEMENT COMMANDS")
     print(f"\nService status:\n  systemctl status {service_name}")
@@ -914,7 +957,8 @@ def deploy_bare_metal() -> None:
                 warn("requirements.txt not found.")
 
     socket_file = Path("/run") / f"{service_name}.sock"
-    nginx_conf = Path("/etc/nginx/sites-available") / service_name
+    nginx_conf = Path("/etc/nginx/sites-available") / domain
+    nginx_link = Path("/etc/nginx/sites-enabled") / domain
     systemd_service = Path("/etc/systemd/system") / f"{service_name}.service"
 
     prepare_system()
@@ -963,7 +1007,16 @@ def deploy_bare_metal() -> None:
         socket_file=socket_file,
         output_path=nginx_conf,
     )
-    activate_nginx_site(nginx_conf, service_name, remove_default=True)
+    if not nginx_conf.is_file():
+        fail(f"Failed to create Nginx configuration: {nginx_conf}")
+    success(f"Nginx config created: {nginx_conf}")
+
+    nginx_link = activate_nginx_site(
+        nginx_conf,
+        domain,
+        remove_default=True,
+    )
+    success(f"Nginx site enabled: {nginx_link}")
 
     section("🧪 TESTING NGINX CONFIGURATION")
     result = run(["nginx", "-t"], check=False, capture=True)
@@ -1036,6 +1089,8 @@ def deploy_bare_metal() -> None:
     print(f"📂 Project: {project_dir}")
     print(f"⚙️ Service: {service_name}")
     print(f"🐍 Virtual Environment: {venv_path}")
+    print(f"🌐 Nginx config:      {nginx_conf}")
+    print(f"🔗 Nginx enabled:      {nginx_link}")
     print("")
     section("📋 USEFUL COMMANDS")
     print(f"\nRestart Flask App:\nsystemctl restart {service_name}")
