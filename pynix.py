@@ -679,6 +679,178 @@ def wait_for_container_health(container_name: str, enabled: bool) -> None:
     fail("Docker container health check timed out.")
 
 
+
+def is_container_running(container_name: str) -> bool:
+    result = run(
+        ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+        check=False,
+        capture=True,
+    )
+    return (result.stdout or "").strip().lower() == "true"
+
+
+def detect_container_host_port(container_name: str) -> int | None:
+    result = run(
+        ["docker", "port", container_name],
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        return None
+
+    for line in (result.stdout or "").splitlines():
+        match = re.search(r":(\d+)\s*$", line.strip())
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def configure_existing_docker() -> None:
+    """
+    Configure Nginx, UFW and SSL for an existing Docker container.
+
+    The container itself is never built, stopped, restarted, recreated, or
+    otherwise modified by this mode.
+    """
+    clear_screen()
+    banner()
+    require_root()
+
+    section("🔗 CONFIGURE EXISTING DOCKER APPLICATION")
+
+    domain = ask("Enter domain name (example.com)")
+    if not validate_domain(domain):
+        fail("Invalid domain name.")
+
+    if not command_exists("docker"):
+        fail("Docker is not installed.")
+
+    container_name = ask("Enter existing Docker container name")
+    if not container_name:
+        fail("Docker container name is required.")
+
+    inspected = run(
+        ["docker", "inspect", container_name],
+        check=False,
+        capture=True,
+    )
+    if inspected.returncode != 0:
+        fail(f"Docker container was not found: {container_name}")
+
+    if not is_container_running(container_name):
+        run(
+            ["docker", "ps", "-a", "--filter", f"name=^{container_name}$"],
+            check=False,
+        )
+        fail(
+            f"Docker container '{container_name}' exists but is not running. "
+            "Start it first and rerun TNIX."
+        )
+
+    host_port = detect_container_host_port(container_name)
+    if host_port is None:
+        fail(
+            f"Could not determine the published host port for '{container_name}'. "
+            "The container must publish its application port to the host."
+        )
+
+    section("🔎 EXISTING CONTAINER")
+    success(f"Container found: {container_name}")
+    success("Container status: running")
+    success(f"Detected upstream: 127.0.0.1:{host_port}")
+
+    print("")
+    print("Docker port bindings:")
+    run(["docker", "port", container_name], check=False)
+
+    if not ask_yes_no(
+        f"Use 127.0.0.1:{host_port} as the Nginx upstream?",
+        default=True,
+    ):
+        host_port = validate_port(
+            ask("Enter host port for Nginx upstream", str(host_port))
+        )
+
+    ssl_email = ask("Enter SSL email")
+    if not ssl_email:
+        fail("SSL email is required.")
+
+    include_www = ask_yes_no(
+        f"Include www.{domain} in SSL certificate?",
+        default=False,
+    )
+
+    prepare_system()
+    ensure_nginx()
+
+    nginx_conf = Path("/etc/nginx/sites-available") / domain
+    nginx_names = f"{domain} www.{domain}" if include_www else domain
+
+    section("🌐 CREATING NGINX CONFIGURATION")
+    generate_docker_nginx(
+        domain_names=nginx_names,
+        app_port=host_port,
+        output_path=nginx_conf,
+    )
+
+    if not nginx_conf.is_file():
+        fail(f"Failed to create Nginx configuration: {nginx_conf}")
+    success(f"Nginx config created: {nginx_conf}")
+
+    nginx_link = activate_nginx_site(
+        nginx_conf,
+        domain,
+        remove_default=False,
+    )
+    success(f"Nginx site enabled: {nginx_link}")
+
+    section("🧪 TESTING NGINX CONFIGURATION")
+    nginx_test = run(["nginx", "-t"], check=False, capture=True)
+    if nginx_test.returncode != 0:
+        print(nginx_test.stdout or "")
+        print(nginx_test.stderr or "")
+        fail("Nginx configuration failed.")
+
+    success("Nginx configuration successful.")
+    run(["systemctl", "enable", "nginx"])
+    run(["systemctl", "reload", "nginx"])
+    success("Nginx reloaded successfully.")
+
+    configure_firewall()
+    configure_ssl(domain, include_www, ssl_email)
+
+    section("🔍 FINAL VERIFICATION")
+    if not nginx_conf.is_file():
+        fail(f"Nginx configuration is missing: {nginx_conf}")
+    if not nginx_link.is_symlink():
+        fail(f"Nginx enabled-site link is missing: {nginx_link}")
+    if not is_container_running(container_name):
+        fail(
+            f"Container '{container_name}' is no longer running. "
+            "TNIX did not intentionally restart it."
+        )
+
+    success(f"Container {container_name} is still running.")
+    success(f"Nginx config: {nginx_conf}")
+    success(f"Nginx enabled: {nginx_link}")
+
+    section("🎉 EXISTING DOCKER CONFIGURATION COMPLETE")
+    print(f"🌍 Domain:            https://{domain}")
+    print(f"🐳 Container:         {container_name}")
+    print(f"🔌 Nginx upstream:    127.0.0.1:{host_port}")
+    print(f"🌐 Nginx config:      {nginx_conf}")
+    print(f"🔗 Nginx enabled:     {nginx_link}")
+
+    section("📋 MANAGEMENT COMMANDS")
+    print(f"\nContainer status:\n  docker ps --filter name=^{container_name}$")
+    print(f"\nContainer logs:\n  docker logs -f {container_name}")
+    print("\nNginx config test:\n  nginx -t")
+    print("\nReload Nginx:\n  systemctl reload nginx")
+    print("\nFirewall rules:\n  ufw status")
+    print("\nSSL certificates:\n  certbot certificates")
+    print("")
+
+
 def deploy_docker() -> None:
     clear_screen()
     banner()
@@ -1110,9 +1282,11 @@ def main() -> int:
     deployment_type = choose_deployment_type()
     if deployment_type == 1:
         deploy_docker()
-    else:
+    elif deployment_type == 2:
         deploy_bare_metal()
-    return 0
+    elif deployment_type == 3:
+        configure_existing_docker()
+
 
 
 if __name__ == "__main__":
