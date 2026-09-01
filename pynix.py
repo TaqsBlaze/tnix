@@ -110,17 +110,21 @@ def choose_deployment_type() -> int:
     section("🚀 SELECT DEPLOYMENT TYPE")
     print("")
     print("1) Docker")
-    print("   Docker image + Docker Compose + systemd")
+    print("   Build/pull Docker image + Compose + systemd + Nginx + HTTPS")
     print("")
     print("2) Bare Metal")
-    print("   Original Flask + Gunicorn + Python venv + systemd")
+    print("   Flask + Gunicorn + Python virtual environment + systemd + Nginx + HTTPS")
+    print("")
+    print("3) Configure Existing Docker")
+    print("   Use an existing running container + Nginx + UFW + SSL")
     print("")
 
     while True:
-        value = input("Select deployment type [1-2]: ").strip()
-        if value in {"1", "2"}:
+        value = input("Select deployment type [1-3]: ").strip()
+        if value in {"1", "2", "3"}:
             return int(value)
-        print("❌ Invalid selection. Please choose 1 or 2.")
+
+        print("❌ Invalid selection. Please choose 1, 2, or 3.")
 
 
 # ==========================================================
@@ -1290,12 +1294,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except KeyboardInterrupt:
-        print("\n⚠️ TNIX interrupted by user.", file=sys.stderr)
-        raise SystemExit(130)
-    except subprocess.CalledProcessError as exc:
-        cmd = " ".join(shlex.quote(str(x)) for x in exc.cmd)
-        print(f"❌ TNIX command failed (exit {exc.returncode}): {cmd}", file=sys.stderr)
-        raise SystemExit(exc.returncode)
+    deployment_type = choose_deployment_type()
+
+    if deployment_type == 1:
+        deploy_docker()
+    elif deployment_type == 2:
+        deploy_bare_metal()
+    elif deployment_type == 3:
+        configure_existing_docker()
