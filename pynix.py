@@ -400,9 +400,10 @@ def generate_bare_nginx(
     socket_file: Path,
     output_path: Path,
 ) -> None:
-    content = f'''server {{
+    content = f'''# TNIX IPv4-only Nginx configuration.
+# No IPv6 listeners are configured.
+server {{
     listen 80;
-    listen [::]:80;
 
     server_name {domain_names};
 
@@ -427,9 +428,10 @@ def generate_docker_nginx(
     app_port: int,
     output_path: Path,
 ) -> None:
-    content = f'''server {{
+    content = f'''# TNIX IPv4-only Nginx configuration.
+# No IPv6 listeners are configured.
+server {{
     listen 80;
-    listen [::]:80;
 
     server_name {domain_names};
 
@@ -528,6 +530,8 @@ def configure_firewall() -> None:
 
 
 def configure_ssl(domain: str, include_www: bool, email: str) -> None:
+    # IPv4-only deployment: Nginx exposes HTTP/HTTPS only on IPv4.
+    # DNS must not publish an AAAA record for the domain.
     section("🔒 HTTPS SSL SETUP")
 
     if not ask_yes_no("Generate/renew SSL certificate with Certbot?", default=True):
@@ -726,6 +730,9 @@ def configure_existing_docker() -> None:
     if not validate_domain(domain):
         fail("Invalid domain name.")
 
+    info("TNIX is configured for IPv4-only Nginx.")
+    warn("Make sure this domain has no AAAA DNS record.")
+
     if not command_exists("docker"):
         fail("Docker is not installed.")
 
@@ -864,6 +871,9 @@ def deploy_docker() -> None:
     domain = ask("Enter domain name (example.com)")
     if not validate_domain(domain):
         fail("Invalid domain name.")
+
+    info("TNIX is configured for IPv4-only Nginx.")
+    warn("Make sure this domain has no AAAA DNS record.")
 
     project_dir = ensure_absolute_project_dir(ask("Enter project root path"))
 
@@ -1102,6 +1112,9 @@ def deploy_bare_metal() -> None:
     domain = ask("Enter domain name")
     if not validate_domain(domain):
         fail("Invalid domain name.")
+
+    info("TNIX is configured for IPv4-only Nginx.")
+    warn("Make sure this domain has no AAAA DNS record.")
 
     project_dir = ensure_absolute_project_dir(ask("Enter project root path"))
 
